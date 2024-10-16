@@ -6,14 +6,14 @@
     vectors. 
     
     Kernel 1 computes the dot product by multiplying the vectors in-place in
-    global memory, then uses shared memory and parallel reduction to calculate partial 
-    sums for each block. Kernel 1 sends an array of partial sums back to the CPU and 
-    the CPU adds the partial sums to determine the final dot product. 
+    shared memory, then uses parallel reduction to calculate partial sums for each 
+    block. Kernel 1 sends an array of partial sums back to the CPU and the CPU adds 
+    the partial sums to determine the final dot product. 
     
-    Kernel 2 computes the dot product by multiplying the vectors in-place in global
-    memory, then uses shared memory and parallel reduction to calculate partial sums 
-    for each block. Kernel 2 uses an atomic function for read-modify-write operations
-    involved in adding up the partial sums on the GPU.
+    Kernel 2 computes the dot product by multiplying the vectors in-place in shared
+    memory, then uses parallel reduction to calculate partial sums for each block. 
+    Kernel 2 uses an atomic function for read-modify-write operations involved in 
+    adding up the partial sums on the GPU.
 
 */
 
@@ -42,22 +42,24 @@ __global__ void dot_product_1(float *g_A, float *g_B, float *g_ps1, int n) {
 
     if (idx >= n) return;                   // boundary check
 
-    // Multiply vectors in-place in global memory
-    g_A[idx] = g_A[idx] * g_B[idx];
-    __syncthreads();                        // ensure all multiplication is done
+    // Save vector segments to shared memory
+    __shared__ float s_A[SHARED_MEM_AMT];   // allocate shared memory
+    __shared__ float s_B[SHARED_MEM_AMT];       
 
-    // Save vector segment to shared memory
-    __shared__ float smem[SHARED_MEM_AMT];          // allocate shared memory
+    float *addr_ptr_A = g_A + blockIdx.x * blockDim.x;  // find starting address of vector segment
+    float *addr_ptr_B = g_B + blockIdx.x * blockDim.x;
 
-    float *s_A = g_A + blockIdx.x * blockDim.x;     // find starting address of vector segment
-
-    smem[tid] = s_A[tid];                   // copy vector to shared memory
+    s_A[tid] = addr_ptr_A[tid];             // copy vector segments to shared memory
+    s_B[tid] = addr_ptr_B[tid];
     __syncthreads();                        // ensure all copying to shared mem is done
+
+    // Multiply vectors in shared memory
+    s_A[tid] = s_A[tid] * s_B[tid];
 
     // In-place reduction in shared memory
     for (int stride = 1; stride < blockDim.x; stride *= 2) {
         if ((tid % (2* stride)) == 0) {
-            smem[tid] += smem[tid + stride];
+            s_A[tid] += s_A[tid + stride];
         }
         __syncthreads();                    // synchronize within threadblock
     }
@@ -65,12 +67,12 @@ __global__ void dot_product_1(float *g_A, float *g_B, float *g_ps1, int n) {
     // Partial sum for this block is stored in thread 0
     
     // Write partial sum result for this block to global memory
-    if (tid == 0) g_ps1[blockIdx.x] = smem[0];
+    if (tid == 0) g_ps1[blockIdx.x] = s_A[0];
 }
 
 
-/*  CUDA GPU kernel 2 function to calculate partial sums of the dot product of
-    two vectors. Uses shared memory and parallel reduction. 
+/*  CUDA GPU kernel 2 function to calculate the dot product of two vectors. 
+    Uses shared memory, parallel reduction and an atomic function.
     Parameters:  
         g_A:    single precision floating point vector of length n
         g_B:    single precision floating point vector of length n
@@ -83,22 +85,24 @@ __global__ void dot_product_2(float *g_A, float *g_B, float *g_dp2, int n) {
 
     if (idx >= n) return;                   // boundary check
 
-    // Multiply vectors in-place in global memory
-    g_A[idx] = g_A[idx] * g_B[idx];
-    __syncthreads();                        // ensure all multiplication is done
+    // Save vector segments to shared memory
+    __shared__ float s_A[SHARED_MEM_AMT];   // allocate shared memory
+    __shared__ float s_B[SHARED_MEM_AMT];       
 
-    // Save vector segment to shared memory
-    __shared__ float smem[SHARED_MEM_AMT];          // allocate shared memory
+    float *addr_ptr_A = g_A + blockIdx.x * blockDim.x;  // find starting address of vector segment
+    float *addr_ptr_B = g_B + blockIdx.x * blockDim.x;
 
-    float *s_A = g_A + blockIdx.x * blockDim.x;     // find starting address of vector segment
-
-    smem[tid] = s_A[tid];                   // copy vector to shared memory
+    s_A[tid] = addr_ptr_A[tid];             // copy vector segments to shared memory
+    s_B[tid] = addr_ptr_B[tid];
     __syncthreads();                        // ensure all copying to shared mem is done
+
+    // Multiply vectors in shared memory
+    s_A[tid] = s_A[tid] * s_B[tid];
 
     // In-place reduction in shared memory
     for (int stride = 1; stride < blockDim.x; stride *= 2) {
         if ((tid % (2* stride)) == 0) {
-            smem[tid] += smem[tid + stride];
+            s_A[tid] += s_A[tid + stride];
         }
         __syncthreads();                    // synchronize within threadblock
     }
@@ -106,7 +110,7 @@ __global__ void dot_product_2(float *g_A, float *g_B, float *g_dp2, int n) {
     // Partial sum for this block is stored in thread 0
 
     // Add partial sum result to global dot product variable
-    if (tid == 0) atomicAdd(g_dp2, smem[0]);
+    if (tid == 0) atomicAdd(g_dp2, s_A[0]);
 }
 
 
