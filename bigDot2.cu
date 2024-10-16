@@ -25,6 +25,7 @@
 
 /* Function Declarations */
 void random_floats(float *X, int vect_length);
+float CPU_big_dot(float *A, float *B, int bytes);
 
 
 /*  CUDA GPU kernel 1 function to calculate partial sums of the dot product of
@@ -129,6 +130,9 @@ int main(void) {
     float *d_dp2;                   // device copy of dot product 2
 
     // Timers
+    cudaEvent_t startCPU, stopCPU;  // timers for CPU-only
+    cudaEventCreate(&startCPU);
+    cudaEventCreate(&stopCPU);
     cudaEvent_t start1, stop1;      // timers for kernel 1
     cudaEventCreate(&start1);
     cudaEventCreate(&stop1);
@@ -156,6 +160,16 @@ int main(void) {
     random_floats(A, N);
     random_floats(B, N);
     ps1 = (float *) malloc(grid.x * sizeof(float));
+
+
+    // CPU-only dot product
+    cudaEventRecord(startCPU);
+    float CPU_dot_product = CPU_big_dot(A, B, bytes);
+    cudaEventRecord(stopCPU);
+    printf("\nCPU-Only Dot Product: %f \n", CPU_dot_product);
+    float cpu_ms = 0;
+    cudaEventElapsedTime(&cpu_ms, startCPU, stopCPU);
+    printf("CPU-Only Time: %0.2f ms \n", cpu_ms);
 
 
     // CPU+GPU Dot Product (shared memory & parallel reduction)
@@ -247,9 +261,24 @@ int main(void) {
         X: single precision floating point vector
         vect_length: number of elements in vector X      */
 void random_floats(float *X, int vect_length) {
-    //srand ( time(NULL) );
     for (int i = 0; i < vect_length; i++) {
         X[i] = (float) rand() / (float) rand();
     }
     return;
+}
+
+
+/* Compute the dot product of two vectors on the CPU
+   Input:   
+        A, B:   single precision floating point vectors of length N
+        bytes:   size of vector in bytes
+   Output:  dot product of given vectors        */
+float CPU_big_dot(float *A, float *B, int bytes) {
+
+    float dot_product = 0.0;
+    for (int i = 0; i < N; i++) {
+        dot_product += (A[i] * B[i]);
+    }
+
+    return dot_product;
 }
